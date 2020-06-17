@@ -1,23 +1,5 @@
-import com.opencsv.CSVReaderHeaderAware;
-import org.apache.spark.sql.sources.In;
-import org.neo4j.driver.AuthTokens;
-import org.neo4j.driver.Driver;
-import org.neo4j.driver.GraphDatabase;
-import org.neo4j.driver.Session;
-import org.neo4j.driver.Result;
-import org.neo4j.driver.Transaction;
-import org.neo4j.driver.TransactionWork;
-
-import static org.neo4j.driver.Values.parameters;
-
-import com.opencsv.CSVReader;
-import org.neo4j.driver.types.Node;
-
-import java.io.BufferedReader;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.IOException;
-import java.lang.reflect.Array;
+import org.neo4j.driver.*;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -44,8 +26,9 @@ public class LoadGraph {
         excCypher(query);
     }
 
-    private static HashMap<String, String> loadProduct() {
+    private static boolean loadProduct() {
 
+        //read the categories and their id from the csv file and save in a map for lookup
         HashMap categoryNameMap = new HashMap();
 
         String categoryFile = "src/main/resources/aisles.csv";
@@ -75,9 +58,7 @@ public class LoadGraph {
             }
         }
 
-
-        HashMap<String, String> relationMap = new HashMap<>();
-
+        //read the products from csv and insert them in to the graph
         try (Session session = driver.session()) {
             String message = session.writeTransaction(new TransactionWork<String>() {
                 @Override
@@ -103,8 +84,6 @@ public class LoadGraph {
                             String productName = columns.get(1);
                             String categoryId = columns.get(2);
 
-                            relationMap.put(productID, categoryId);
-
                             Map<String, Object> params = new HashMap<>();
                             params.put("id", productID);
                             params.put("name", productName);
@@ -112,8 +91,8 @@ public class LoadGraph {
                             params.put("catName", categoryNameMap.get(categoryId));
 
                             result = tx.run("CREATE (p:Product{id:$id, name:$name}) " +
-                                    "MERGE (c:Category{id:$catId, name:$catName}) "+
-                                    "CREATE (p)-[:BELONGS_TO]->(c)" , params);
+                                    "MERGE (c:Category{id:$catId, name:$catName}) " +
+                                    "CREATE (p)-[:BELONGS_TO]->(c)", params);
                         }
 
                     } catch (IOException e) {
@@ -125,10 +104,134 @@ public class LoadGraph {
 
                 }
             });
-            return relationMap;
+            return true;
         }
     }
 
+    private static boolean loadPurchaseRelation() {
+
+        //get all the partial file names
+        ArrayList<String> partialFiles = getPartialFilePaths("src/main/resources/purchase_relation.csv");
+        int count = 0;
+        for (String path : partialFiles) {
+
+            System.out.println("Processing file: " + path);
+            //for each file read the file, and create the relationships in the graphs
+
+            BufferedReader bufferedReader = null;
+            String line = "";
+            Result result = null;
+            Session session = null;
+
+            try {
+
+                bufferedReader = new BufferedReader(new FileReader(path));
+                session = driver.session();
+                if(driver==null)
+                    driver = GraphDatabase.driver("bolt://localhost:7687", AuthTokens.basic("neo4j", "123456"));
+
+                while ((line = bufferedReader.readLine()) != null) {
+
+                    //user_id, product_id, order_count, reorder_count
+                    String customerID = line.split(",")[0];
+                    String productID = line.split(",")[1];
+                    String orderCount = line.split(",")[2];
+                    String reorderCount = line.split(",")[3];
+
+                    String query = "MATCH(p:Product{id:\"" + productID + "\"}) " +
+                            "MERGE(c:Customer{id:\"" + customerID + "\"}) " +
+                            "CREATE (c)-[:PURCHASE{total_order:toInteger(\"" + orderCount + "\"),reorder_count:toInteger(\"" + reorderCount + "\")}]->(p)";
+                    session.run(query);
+                }
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            finally {
+                session.close();
+                driver.close();
+            }
+        }
+        System.out.println("Total relation count: " + count);
+        return true;
+    }
+
+    private static boolean loadInteractionRelation() {
+
+        //get all the partial file names
+        ArrayList<String> partialFiles = getPartialFilePaths("src/main/resources/events_relation.csv");
+        for (String path : partialFiles) {
+
+            System.out.println("Processing file: " + path);
+            //for each file read the file, and create the relationships in the graphs
+
+            BufferedReader bufferedReader = null;
+            String line = "";
+            Result result = null;
+            Session session = null;
+
+            try {
+
+                bufferedReader = new BufferedReader(new FileReader(path));
+                session = driver.session();
+                if(driver==null)
+                    driver = GraphDatabase.driver("bolt://localhost:7687", AuthTokens.basic("neo4j", "123456"));
+
+                while ((line = bufferedReader.readLine()) != null) {
+
+                    //customer_id, product_id, event, count
+                    String customerID = line.split(",")[0];
+                    String productID = line.split(",")[1];
+                    String event = line.split(",")[2];
+                    String count = line.split(",")[3];
+
+                    String query = "MATCH(p:Product{id:\"" + productID + "\"}) " +
+                            "MATCH(c:Customer{id:\"" + customerID + "\"}) ";
+                    if(event.equals("view")){
+                        String part = "MERGE (c)-[i:INTERECT]->(p)"+
+                                " SET i.view_count=toInteger(\"" + count +"\")";
+                        query = query+part;
+                    }else if(event.equals("addtocart")){
+                        String part = "MERGE (c)-[i:INTERECT]->(p)"+
+                                " SET i.atc_count=toInteger(\"" + count + "\")";
+                        query = query+part;
+                    }else if(event.equals("transaction")){
+                        String part = "MERGE (c)-[i:INTERECT]->(p)"+
+                                " SET i.trans_count=toInteger(\"" + count +"\")";
+                        query = query+part;
+                    }else{
+                        continue;
+                    }
+                    session.run(query);
+                }
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            finally {
+                session.close();
+                driver.close();
+            }
+        }
+        return true;
+    }
+
+    private static ArrayList<String> getPartialFilePaths(String directory) {
+        ArrayList<String> partialFilePaths = new ArrayList<>();
+        File[] files = new File(directory).listFiles();
+        for (File file : files) {
+
+            if (file.isFile()) {
+                String path = file.getPath();
+                if (!(path.contains("SUCCESS") || path.contains("crc"))) {
+                    partialFilePaths.add(path);
+                }
+            }
+        }
+        return partialFilePaths;
+    }
 
     public static void main(String... args) throws Exception {
         try {
@@ -136,11 +239,9 @@ public class LoadGraph {
             driver = GraphDatabase.driver("bolt://localhost:7687", AuthTokens.basic("neo4j", "123456"));
 
             //loadCategory();
-            HashMap productCategories = loadProduct();
-
-//            for (Object key : productCategories.keySet()) {
-//                System.out.println("key: " + key + " value: " + productCategories.get(key));
-//            }
+            loadProduct();
+            loadPurchaseRelation();
+            loadInteractionRelation();
 
         } catch (Exception e) {
             e.printStackTrace();
