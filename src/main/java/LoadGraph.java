@@ -1,4 +1,5 @@
 import org.neo4j.driver.*;
+
 import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -127,7 +128,7 @@ public class LoadGraph {
 
                 bufferedReader = new BufferedReader(new FileReader(path));
                 session = driver.session();
-                if(driver==null)
+                if (driver == null)
                     driver = GraphDatabase.driver("bolt://localhost:7687", AuthTokens.basic("neo4j", "123456"));
 
                 while ((line = bufferedReader.readLine()) != null) {
@@ -147,8 +148,7 @@ public class LoadGraph {
                 e.printStackTrace();
             } catch (IOException e) {
                 e.printStackTrace();
-            }
-            finally {
+            } finally {
                 session.close();
                 driver.close();
             }
@@ -175,7 +175,7 @@ public class LoadGraph {
 
                 bufferedReader = new BufferedReader(new FileReader(path));
                 session = driver.session();
-                if(driver==null)
+                if (driver == null)
                     driver = GraphDatabase.driver("bolt://localhost:7687", AuthTokens.basic("neo4j", "123456"));
 
                 while ((line = bufferedReader.readLine()) != null) {
@@ -188,19 +188,19 @@ public class LoadGraph {
 
                     String query = "MATCH(p:Product{id:\"" + productID + "\"}) " +
                             "MATCH(c:Customer{id:\"" + customerID + "\"}) ";
-                    if(event.equals("view")){
-                        String part = "MERGE (c)-[i:INTERECT]->(p)"+
-                                " SET i.view_count=toInteger(\"" + count +"\")";
-                        query = query+part;
-                    }else if(event.equals("addtocart")){
-                        String part = "MERGE (c)-[i:INTERECT]->(p)"+
+                    if (event.equals("view")) {
+                        String part = "MERGE (c)-[i:INTERECT]->(p)" +
+                                " SET i.view_count=toInteger(\"" + count + "\")";
+                        query = query + part;
+                    } else if (event.equals("addtocart")) {
+                        String part = "MERGE (c)-[i:INTERECT]->(p)" +
                                 " SET i.atc_count=toInteger(\"" + count + "\")";
-                        query = query+part;
-                    }else if(event.equals("transaction")){
-                        String part = "MERGE (c)-[i:INTERECT]->(p)"+
-                                " SET i.trans_count=toInteger(\"" + count +"\")";
-                        query = query+part;
-                    }else{
+                        query = query + part;
+                    } else if (event.equals("transaction")) {
+                        String part = "MERGE (c)-[i:INTERECT]->(p)" +
+                                " SET i.trans_count=toInteger(\"" + count + "\")";
+                        query = query + part;
+                    } else {
                         continue;
                     }
                     session.run(query);
@@ -209,12 +209,32 @@ public class LoadGraph {
                 e.printStackTrace();
             } catch (IOException e) {
                 e.printStackTrace();
-            }
-            finally {
+            } finally {
                 session.close();
                 driver.close();
             }
         }
+        return true;
+    }
+
+    private static boolean createSimilarityRelation() {
+
+        Session session = null;
+        if (driver == null)
+            driver = GraphDatabase.driver("bolt://localhost:7687", AuthTokens.basic("neo4j", "123456"));
+        session = driver.session();
+
+        String query = "MATCH(c:Customer)-[:PURCHASE]->(product) " +
+                "WITH {item:id(c), categories:collect(id(product))} AS userData " +
+                "WITH collect(userData) as data " +
+                "CALL algo.similarity.jaccard(data, {topK:3, similarityCutoff:0.1, write:true}) " +
+                "YIELD nodes, similarityPairs, writeRelationshipType, writeProperty, min, max, mean, p75 " +
+                "RETURN nodes, similarityPairs, writeRelationshipType, writeProperty, min, max, mean, p75";
+        session.run(query);
+
+        session.close();
+        driver.close();
+
         return true;
     }
 
@@ -239,9 +259,10 @@ public class LoadGraph {
             driver = GraphDatabase.driver("bolt://localhost:7687", AuthTokens.basic("neo4j", "123456"));
 
             //loadCategory();
-            loadProduct();
-            loadPurchaseRelation();
-            loadInteractionRelation();
+            //loadProduct();
+            //loadPurchaseRelation();
+            //loadInteractionRelation();
+            createSimilarityRelation();
 
         } catch (Exception e) {
             e.printStackTrace();
