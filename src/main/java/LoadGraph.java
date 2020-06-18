@@ -21,12 +21,6 @@ public class LoadGraph {
         }
     }
 
-    private static void loadCategory() {
-        String query = "LOAD CSV WITH HEADERS FROM \"file:///recommender/aisles.csv\" as row FIELDTERMINATOR ','\n" +
-                "CREATE (c:Category{id:toInteger(row.aisle_id), name:row.aisle})";
-        excCypher(query);
-    }
-
     private static boolean loadProduct() {
 
         //read the categories and their id from the csv file and save in a map for lookup
@@ -97,7 +91,6 @@ public class LoadGraph {
                         }
 
                     } catch (IOException e) {
-                        System.out.println("EXCEPTION OCCURED");
                         e.printStackTrace();
                     } finally {
                         return result.toString();
@@ -258,10 +251,9 @@ public class LoadGraph {
 
             driver = GraphDatabase.driver("bolt://localhost:7687", AuthTokens.basic("neo4j", "123456"));
 
-            //loadCategory();
-            //loadProduct();
-            //loadPurchaseRelation();
-            //loadInteractionRelation();
+            loadProduct();
+            loadPurchaseRelation();
+            loadInteractionRelation();
             createSimilarityRelation();
 
         } catch (Exception e) {
